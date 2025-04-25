@@ -1,41 +1,38 @@
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from rag_chat.configs.logging_config import setup_logging
-from langchain_huggingface import HuggingFacePipeline
 import logging
 
+
 class RAGSystem:
-    def __init__(self, reranker, llm):
+    def __init__(self, reranker, llm, prompt_template):
         self.reranker = reranker
         self.llm = llm
-
-    def create_prompt(self):
-        system_prompt = (
-            "You are an assistant for a question-answering task. Use the pieces of retrieved data to answer the asked questions. "
-            "If you don't know the answer, just say you don't have anything related to it in your knowledge base. "
-            "Answer the question in a maximum of 3 sentences. Do not go outside the context. Answer concisely.\n\n"
-            "{context}"
+        self.prompt_template = (
+            prompt_template  # <-- Accept prompt_template from main.py
         )
-        return ChatPromptTemplate.from_messages([  # Prompt setup
-            ("system", system_prompt),
-            ("user", "{input}")
-        ])
 
     def ask_question(self, docs, question):
-        # Perform re-ranking based on the query
-        logging.info("Re-ranking documents for question: %s", question)
-        top_docs = self.reranker.rerank_documents(query=question, docs=docs)
+        logging.info("Processing question: %s", question)
 
-        # Now use these re-ranked documents in the prompt
-        prompt = self.create_prompt()
-        question_answer_chain = create_stuff_documents_chain(self.llm.llm, prompt)
-        
-        logging.info("Generating response using LLM...")
-        response = question_answer_chain.invoke({
-            "input": question,
-            "context": top_docs
-        })
+        # Step 1: If reranker is provided, use it to re-rank docs
+        if self.reranker:
+            logging.info("Re-ranking documents...")
+            docs = self.reranker.rerank_documents(query=question, docs=docs)
 
-        logging.info("Response: %s", response)
+        # Step 2: Create a QA chain using the prompt and the LLM
+        logging.info("Creating QA chain with provided prompt...")
+        question_answer_chain = create_stuff_documents_chain(
+            self.llm.llm, self.prompt_template
+        )
+
+        # Step 3: Get response
+        logging.info("Generating response...")
+        response = question_answer_chain.invoke(
+            {
+                "input": question,
+                "context": docs,  # Top re-ranked or retrieved docs
+            }
+        )
+
+        logging.info("Generated response: %s", response)
         return response
