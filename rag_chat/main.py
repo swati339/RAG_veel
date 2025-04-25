@@ -1,37 +1,67 @@
 from models.pdf_processor import PDFProcessor
 from models.embeddings import EmbeddingModel
 from rag_chat.models.llm_model import LLMModel
-from models.reranking import ReRanker 
+from models.reranking import ReRanker
 from rag_chat.models.rag_pipeline import RAGSystem
 from configs.logging_config import setup_logging
-import logging
+from prompts.prompt_templates import SystemPrompt
+from langchain.vectorstores import Chroma
+
+
+def is_oneliner_request(user_input: str) -> bool:
+    one_liner_keywords = [
+        "one line",
+        "oneliner",
+        "brief answer",
+        "in short",
+    ]
+    return any(keyword in user_input.lower() for keyword in one_liner_keywords)
+
 
 if __name__ == "__main__":
-    setup_logging()  # Initialize logging
+    setup_logging()
 
-    # Load and split documents
-    processor = PDFProcessor(file_path=r"docs/attention.pdf")
+    # 1. Load and split documents
+    processor = PDFProcessor(file_path="docs/attention.pdf")
     all_splits = processor.load_and_split()
 
-    # Generate embeddings
+    # 2. Embedding model
     embedder = EmbeddingModel()
-    # This will generate embeddings for your documents
-    document_embeddings = embedder.embed_texts(all_splits)
 
-    # Load LLM model
+    # 3. Vectorstore from documents
+    vectorstore = Chroma.from_documents(
+        documents=all_splits, embedding=embedder.model, persist_directory="chroma_db"
+    )
+
+    # 4. Setup retriever
+    retriever = vectorstore.as_retriever(
+        search_type="similarity", search_kwargs={"k": 3}
+    )
+
+    # 5. LLM
     llm_model = LLMModel()
 
-    # Initialize the ReRanker with your embedding model
+    question = "What is transformer in deep learning?"
+
+    # 7. Select prompt based on user input
+    prompt_template = (
+        SystemPrompt().get_oneliner_prompt()
+        if is_oneliner_request(question)
+        else SystemPrompt().get_paragraph_prompt()
+    )
+
+    # --- Similarity-based retriever answer ---
+    retrieved_docs = retriever.invoke(question)
+    rag_similarity = RAGSystem(
+        reranker=None, llm=llm_model, prompt_template=prompt_template
+    )
+    print("\n--- Similarity Search Response ---")
+    print(rag_similarity.ask_question(docs=retrieved_docs, question=question))
+
+    # --- Reranked answer ---
     reranker = ReRanker(embedding_model=embedder)
-
-    # Build RAG system with reranker (since you're not using a separate retriever)
-    rag_system = RAGSystem(reranker=reranker, llm=llm_model)
-
-    # Ask a question using the RAG system
-    question = "What is attention in python?"
-    response = rag_system.ask_question(docs=all_splits, question=question)
-
-    # Print the result
-    print(response)
-
-
+    rag_reranked = RAGSystem(
+        reranker=reranker, llm=llm_model, prompt_template=prompt_template
+    )
+    print("\n--- Reranker-enhanced Response ---")
+    print(rag_reranked.ask_question(docs=all_splits, question=question))
