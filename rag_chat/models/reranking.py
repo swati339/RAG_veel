@@ -30,3 +30,5 @@ class ReRanker:
 
         logging.info(f"Top {self.top_k} documents selected after re-ranking.")
         return top_docs
+
+
