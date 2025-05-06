@@ -4,6 +4,7 @@ class SystemPrompt:
     def get_oneliner_prompt(self):
         system_prompt = (
             "Answer in a single concise sentence using the retrieved information. "
+            "Donot give irrelevant informations."
             "If unknown, say you don't have an answer.\n\n{context}"
         )
         return ChatPromptTemplate.from_messages([
@@ -23,7 +24,7 @@ class SystemPrompt:
             "}}\n\n"
             "Only return valid JSON.\n\nContext:\n{context}"
         )
-        return ChatPromptTemplate.from_messages([
+        return ChatPromptTemplate.from_messages([   
             ("system", system_prompt),
             ("human", "{input}")
         ])

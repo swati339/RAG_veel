@@ -1,6 +1,6 @@
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
-from configs.logging_config import setup_logging
+from rag_chat.configs.logging_config import setup_logging
 
 setup_logging()
 logger = logging.getLogger(__name__)

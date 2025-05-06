@@ -1,92 +1,97 @@
-import os
 import logging
+import os
 from dotenv import load_dotenv
-
-from models.pdf_processor import PDFProcessor
-from models.embeddings import EmbeddingModel
-from models.llm_model import LLMModel
-from models.reranking import ReRanker
-from models.rag_pipeline import RAGSystem
-from configs.logging_config import setup_logging
-from prompts.prompt_templates import SystemPrompt
-
+from rag_chat.models.pdf_processor import PDFProcessor
+from rag_chat.models.embeddings import EmbeddingModel
+from rag_chat.models.llm_model import LLMModel
+from rag_chat.models.reranking import ReRanker
+from rag_chat.models.rag_pipeline import RAGSystem
+from rag_chat.configs.logging_config import setup_logging
+from rag_chat.prompts.prompt_templates import SystemPrompt
 from langchain_community.vectorstores import Chroma
-from redis_utils.redis_client import RedisSetup
+from rag_chat.redis_utils.redis_client import RedisSetup 
 
+# Setup
+setup_logging()
+logger = logging.getLogger(__name__)
+load_dotenv()
+
+# Initialize Redis handler
 redis_handler = RedisSetup()
 
+class PipeLine:
+    def __init__(self, reranker, llm, prompt_template):
+        self.reranker = reranker
+        self.llm = llm
+        self.prompt_template = prompt_template
 
-def is_oneliner_request(user_input: str) -> bool:
-    one_liner_keywords = ["one line", "oneliner", "brief answer", "in short","single line"]
-    return any(keyword in user_input.lower() for keyword in one_liner_keywords)
+    @staticmethod
+    def is_oneliner_request(user_input: str) -> bool:
+        one_liner_keywords = ["one line", "oneliner", "brief answer", "in short", "single line"]
+        return any(keyword in user_input.lower() for keyword in one_liner_keywords)
 
+    def run_rag_pipeline(self, question: str):
+        logger.info("Starting RAG pipeline for question: %s", question)
 
-def run_rag_pipeline():
-    setup_logging()
-    logger = logging.getLogger(__name__)
-    load_dotenv()
+        PERSIST_DIR = "chroma_db"
+        PDF_PATH = "/home/swati/Documents/veel_projects/RAG_veel/Docs/NIPS-2017-attention-is-all-you-need-Paper.pdf"
 
-    logger.info("Starting RAG pipeline...")
+        # Step 1: Load and split PDF
+        processor = PDFProcessor(file_path=PDF_PATH)
+        all_splits = processor.load_and_split()
 
-    PERSIST_DIR = "chroma_db"
-    PDF_PATH = "/home/swati/Documents/veel_projects/RAG_veel/Docs/NIPS-2017-attention-is-all-you-need-Paper.pdf"
-    QUESTION = "What is regularization? I want answer in a paragraph."
+        # Step 2: Load embedding model
+        embedder = EmbeddingModel()
 
-    # Step 0: Redis cache check
-    cached_answer = redis_handler.redis_get(QUESTION)
-    if cached_answer:
-        print("\n[Answer from Redis Cache]:\n", cached_answer)
-        logger.info("Answer served from Redis cache.")
-        return
+        # Step 3: Load or create vectorstore
+        if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
+            logger.info("Loading existing Chroma vectorstore...")
+            vectorstore = Chroma(
+                persist_directory=PERSIST_DIR,
+                embedding_function=embedder.model
+            )
+        else:
+            logger.info("Creating new Chroma vectorstore from documents...")
+            vectorstore = Chroma.from_documents(
+                documents=all_splits,
+                embedding=embedder.model,
+                persist_directory=PERSIST_DIR
+            )
+            vectorstore.persist()
 
-    # Step 1: Load and split PDF
-    processor = PDFProcessor(file_path=PDF_PATH)
-    all_splits = processor.load_and_split()
+        retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
 
-    # Step 2: Load embedding model
-    embedder = EmbeddingModel()
+        # Step 4: Retrieve similar docs
+        retrieved_docs = retriever.invoke(question)
 
-    # Step 3: Load or create vectorstore
-    if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
-        logger.info("Loading existing Chroma vectorstore...")
-        vectorstore = Chroma(
-            persist_directory=PERSIST_DIR,
-            embedding_function=embedder.model
+        # Step 5: Use reranker
+        reranker = ReRanker(embedding_model=embedder)
+        reranked_docs = reranker.rerank_documents(query=question, docs=retrieved_docs)
+
+        # Step 6: Redis cache check (hash: "answers")
+        cached_answer = redis_handler.redis_hget("answers", question)
+        if cached_answer:
+            logger.info("Returning cached answer from Redis.")
+            print("\n[Answer from Redis Cache]:\n", cached_answer)
+            return cached_answer
+
+        # Step 7: Load LLM
+        llm_model = LLMModel(model_name="gpt-4o-mini")
+
+        # Step 8: Choose prompt type
+        prompt_template = (
+            SystemPrompt().get_oneliner_prompt()
+            if self.is_oneliner_request(question)
+            else SystemPrompt().get_paragraph_prompt()
         )
-    else:
-        logger.info("Creating new Chroma vectorstore from documents...")
-        vectorstore = Chroma.from_documents(
-            documents=all_splits,
-            embedding=embedder.model,
-            persist_directory=PERSIST_DIR
-        )
-        vectorstore.persist()
 
-    retriever = vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+        # Step 9: Run RAG
+        rag = RAGSystem(reranker=None, llm=llm_model, prompt_template=prompt_template)
+        response = rag.ask_question(docs=reranked_docs, question=question)
 
-    # Step 4: Load LLM
-    llm_model = LLMModel(model_name="gpt-4o-mini")
+        # Step 10: Store in Redis
+        redis_handler.redis_hset("answers", question, response)
+        logger.info("Answer stored in Redis hash for question.")
 
-    # Step 5: Select system prompt
-    prompt_template = (
-        SystemPrompt().get_oneliner_prompt()
-        if is_oneliner_request(QUESTION)
-        else SystemPrompt().get_paragraph_prompt()
-    )
-
-    # Step 6: Retrieve similar docs
-    retrieved_docs = retriever.invoke(QUESTION)
-
-    # Step 7: Use reranker
-    reranker = ReRanker(embedding_model=embedder)
-    reranked_docs = reranker.rerank_documents(query=QUESTION, docs=retrieved_docs)
-
-    # Step 8: Final RAG response
-    rag = RAGSystem(reranker=None, llm=llm_model, prompt_template=prompt_template)
-    response = rag.ask_question(docs=reranked_docs, question=QUESTION)
-
-    print("\n[Final RAG Answer]:\n", response)
-
-    # Step 9: Store result in Redis
-    redis_handler.redis_set(QUESTION, response)
-    logger.info("Answer stored in Redis for future queries.")
+        print("\n[Final RAG Answer]:\n", response)
+        return response

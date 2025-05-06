@@ -16,6 +16,7 @@ dependencies = [
     "pypdf>=5.4.0",
     "python-multipart>=0.0.20",
     "rank-llm>=0.21.0",
+    "redis>=6.0.0",
     "sentence-transformers>=4.1.0",
     "torch>=2.7.0",
     "transformers>=4.51.3",

@@ -1,6 +1,5 @@
-from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
-from configs.logging_config import setup_logging
+from rag_chat.configs.logging_config import setup_logging
 import logging
 import json
 
@@ -24,8 +23,12 @@ class RAGSystem:
 
         # Step 2: Create the QA chain using the given LLM and prompt
         logger.info("Creating QA chain with provided prompt...")
+
+        # Handle both tuple (paragraph prompt) and single (oneliner prompt)
+        prompt = self.prompt_template[0] if isinstance(self.prompt_template, tuple) else self.prompt_template
+
         question_answer_chain = create_stuff_documents_chain(
-            self.llm.llm, self.prompt_template
+            self.llm.llm, prompt
         )
 
         # Step 3: Generate the response
@@ -35,14 +38,16 @@ class RAGSystem:
             "context": docs,
         })
 
-        # Step 4: Try parsing the response as JSON
-        answer_text = response
+        # Step 4: Handle JSON only for paragraph-style prompt
+        if isinstance(self.prompt_template, tuple):  # paragraph prompt returns a tuple
+            try:
+                parsed_response = json.loads(response)
+                logger.info("Successfully parsed structured JSON response.")
+                return parsed_response
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse structured output as JSON. Returning raw response.")
+                return {"raw_response": response}
 
-        try:
-            parsed_response = json.loads(answer_text)
-            logger.info("Successfully parsed structured JSON response.")
-            return parsed_response
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse structured output as JSON. Returning raw response.")
-            return {"raw_response": answer_text}
+        # For one-liner prompt, return as plain text
+        return {"answer": response}
 

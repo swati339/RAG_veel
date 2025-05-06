@@ -2,7 +2,10 @@ import os
 from dotenv import load_dotenv
 import logging
 from langchain_openai import ChatOpenAI
-from configs.logging_config import setup_logging
+from rag_chat.configs.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 class LLMModel:
     def __init__(self, model_name="gpt-4o-mini"):
@@ -19,4 +22,4 @@ class LLMModel:
             max_tokens=512
         )
 
-        logging.info(f"LLM model initialized with OpenAI model: {model_name}")
+        logger.info(f"LLM model initialized with OpenAI model: {model_name}")
