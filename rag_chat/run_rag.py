@@ -11,10 +11,13 @@ from configs.logging_config import setup_logging
 from prompts.prompt_templates import SystemPrompt
 
 from langchain_community.vectorstores import Chroma
+from redis_utils.redis_client import RedisSetup
+
+redis_handler = RedisSetup()
 
 
 def is_oneliner_request(user_input: str) -> bool:
-    one_liner_keywords = ["one line", "oneliner", "brief answer", "in short"]
+    one_liner_keywords = ["one line", "oneliner", "brief answer", "in short","single line"]
     return any(keyword in user_input.lower() for keyword in one_liner_keywords)
 
 
@@ -27,7 +30,14 @@ def run_rag_pipeline():
 
     PERSIST_DIR = "chroma_db"
     PDF_PATH = "/home/swati/Documents/veel_projects/RAG_veel/Docs/NIPS-2017-attention-is-all-you-need-Paper.pdf"
-    QUESTION = "What is transformer in deep learning?"
+    QUESTION = "What is regularization? I want answer in a paragraph."
+
+    # Step 0: Redis cache check
+    cached_answer = redis_handler.redis_get(QUESTION)
+    if cached_answer:
+        print("\n[Answer from Redis Cache]:\n", cached_answer)
+        logger.info("Answer served from Redis cache.")
+        return
 
     # Step 1: Load and split PDF
     processor = PDFProcessor(file_path=PDF_PATH)
@@ -57,25 +67,26 @@ def run_rag_pipeline():
     # Step 4: Load LLM
     llm_model = LLMModel(model_name="gpt-4o-mini")
 
-    # Step 5: Select prompt
+    # Step 5: Select system prompt
     prompt_template = (
         SystemPrompt().get_oneliner_prompt()
         if is_oneliner_request(QUESTION)
         else SystemPrompt().get_paragraph_prompt()
     )
 
-    # Step 6: RAG without reranker
+    # Step 6: Retrieve similar docs
     retrieved_docs = retriever.invoke(QUESTION)
-    rag_similarity = RAGSystem(reranker=None, llm=llm_model, prompt_template=prompt_template)
 
-    logger.info("--- Similarity Search Response ---")
-    response_sim = rag_similarity.ask_question(docs=retrieved_docs, question=QUESTION)
-    print("\n[Similarity-Based Answer]:\n", response_sim)
-
-    # Step 7: RAG with reranker
+    # Step 7: Use reranker
     reranker = ReRanker(embedding_model=embedder)
-    rag_reranked = RAGSystem(reranker=reranker, llm=llm_model, prompt_template=prompt_template)
+    reranked_docs = reranker.rerank_documents(query=QUESTION, docs=retrieved_docs)
 
-    logger.info("--- Reranker-enhanced Response ---")
-    response_reranked = rag_reranked.ask_question(docs=all_splits, question=QUESTION)
-    print("\n[Re-ranked Answer]:\n", response_reranked)
+    # Step 8: Final RAG response
+    rag = RAGSystem(reranker=None, llm=llm_model, prompt_template=prompt_template)
+    response = rag.ask_question(docs=reranked_docs, question=QUESTION)
+
+    print("\n[Final RAG Answer]:\n", response)
+
+    # Step 9: Store result in Redis
+    redis_handler.redis_set(QUESTION, response)
+    logger.info("Answer stored in Redis for future queries.")
