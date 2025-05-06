@@ -1,5 +1,9 @@
 from sklearn.metrics.pairwise import cosine_similarity
 import logging
+from configs.logging_config import setup_logging
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class ReRanker:
@@ -8,7 +12,7 @@ class ReRanker:
         self.top_k = top_k
 
     def rerank_documents(self, query: str, docs: list):
-        logging.info("Starting re-ranking process...")
+        logger.info("Starting re-ranking process...")
 
         # Step 1: Embed the query
         query_embedding = self.embedding_model.embed_text(query)

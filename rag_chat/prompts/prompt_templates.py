@@ -1,4 +1,5 @@
 from langchain_core.prompts import ChatPromptTemplate
+
 class SystemPrompt:
     def get_oneliner_prompt(self):
         system_prompt = (
@@ -13,9 +14,14 @@ class SystemPrompt:
     def get_paragraph_prompt(self):
         system_prompt = (
             "You are an assistant for a question-answering task. Use the pieces of retrieved data to answer the asked questions. "
-            "If you don't know the answer, just say you don't have anything related to it in your knowledge base. "
-            "Answer the question in a maximum of 3 sentences. Do not go outside the context. Answer concisely.\n\n"
-            "{context}"
+            "If you don't know the answer, just say you don't have anything related to it in your knowledge base.\n\n"
+            "Return the response in the following structured JSON format:\n"
+            "{{\n"
+            "  \"question\": \"<original question>\",\n"
+            "  \"answer\": \"<concise paragraph (max 3 sentences) strictly based on context>\",\n"
+            "  \"source_summary\": \"<brief summary of relevant context or section>\"\n"
+            "}}\n\n"
+            "Only return valid JSON.\n\nContext:\n{context}"
         )
         return ChatPromptTemplate.from_messages([
             ("system", system_prompt),

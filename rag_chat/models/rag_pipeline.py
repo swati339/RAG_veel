@@ -1,38 +1,48 @@
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from configs.logging_config import setup_logging
 import logging
+import json
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 
 class RAGSystem:
     def __init__(self, reranker, llm, prompt_template):
         self.reranker = reranker
         self.llm = llm
-        self.prompt_template = (
-            prompt_template  # <-- Accept prompt_template from main.py
-        )
+        self.prompt_template = prompt_template
 
     def ask_question(self, docs, question):
-        logging.info("Processing question: %s", question)
+        logger.info("Processing question: %s", question)
 
-        # Step 1: If reranker is provided, use it to re-rank docs
+        # Step 1: Re-rank documents if reranker is available
         if self.reranker:
-            logging.info("Re-ranking documents...")
+            logger.info("Re-ranking documents...")
             docs = self.reranker.rerank_documents(query=question, docs=docs)
 
-        # Step 2: Create a QA chain using the prompt and the LLM
-        logging.info("Creating QA chain with provided prompt...")
+        # Step 2: Create the QA chain using the given LLM and prompt
+        logger.info("Creating QA chain with provided prompt...")
         question_answer_chain = create_stuff_documents_chain(
             self.llm.llm, self.prompt_template
         )
 
-        # Step 3: Get response
-        logging.info("Generating response...")
-        response = question_answer_chain.invoke(
-            {
-                "input": question,
-                "context": docs,  # Top re-ranked or retrieved docs
-            }
-        )
+        # Step 3: Generate the response
+        logger.info("Generating response...")
+        response = question_answer_chain.invoke({
+            "input": question,
+            "context": docs,
+        })
 
-        logging.info("Generated response: %s", response)
-        return response
+        # Step 4: Try parsing the response as JSON
+        answer_text = response
+
+        try:
+            parsed_response = json.loads(answer_text)
+            logger.info("Successfully parsed structured JSON response.")
+            return parsed_response
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse structured output as JSON. Returning raw response.")
+            return {"raw_response": answer_text}
+
